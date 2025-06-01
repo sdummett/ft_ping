@@ -18,6 +18,7 @@ all: $(BIN)
 
 $(BIN): $(OBJS) | $(BLD_DIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+	sudo setcap cap_net_raw+ep $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
