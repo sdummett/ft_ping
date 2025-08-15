@@ -20,6 +20,7 @@ char *format =
 #include <sys/time.h> // gettimeofday
 #include <arpa/inet.h>
 #include <netinet/ip.h> // struct iphdr
+#include <stdbool.h>
 
 int internal_socket(void)
 {
@@ -137,8 +138,14 @@ int receive_ping(int sockfd)
 
 int main(int argc, char *argv[])
 {
-	(void)argc;
-	(void)argv;
+	t_opts o;
+	if (parse_args(argc, argv, &o) != 0)
+		return 1;
+	if (o.help)
+	{
+		print_usage(stdout);
+		return 0;
+	}
 
 	char *ip = "127.0.0.1";
 	int sockfd;
