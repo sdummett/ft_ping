@@ -79,7 +79,7 @@ int create_icmp_packet(char *packet, int seq)
 	return PACKET_SIZE;
 }
 
-void internal_inet_pton(char *ip_address, struct sockaddr_in *dest_addr)
+void internal_inet_pton(const char *ip_address, struct sockaddr_in *dest_addr)
 {
 	if (inet_pton(AF_INET, ip_address, &(dest_addr->sin_addr)) < 0)
 	{
@@ -147,7 +147,14 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	char *ip = "127.0.0.1";
+	char ip_str[INET_ADDRSTRLEN];
+	if (!forward_dns_resolution(o.target, ip_str))
+	{
+		printf("forward_dns_resolution failed\n");
+		return 1;
+	}
+	printf("Resolved %s -> %s\n", o.target, ip_str);
+	// ---
 	int sockfd;
 	struct sockaddr_in dest_addr;
 	char packet[PACKET_SIZE];
@@ -159,7 +166,7 @@ int main(int argc, char *argv[])
 	// prepare the destination address
 	memset(&dest_addr, 0, sizeof(dest_addr));
 	dest_addr.sin_family = AF_INET;
-	internal_inet_pton(ip, &dest_addr);
+	internal_inet_pton(ip_str, &dest_addr);
 
 	int seq = 1;
 	while (1)
