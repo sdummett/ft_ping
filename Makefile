@@ -8,7 +8,7 @@ BIN       := $(BLD_DIR)/$(NAME)
 
 CC        := cc
 CFLAGS    := -Wall -Wextra -Werror -I$(INC_DIR)
-LDFLAGS   :=                        # (libs will be there)
+LDFLAGS   := -lm                       # (libs will be there)
 
 SRCS      := $(wildcard $(SRC_DIR)/*.c)
 OBJS      := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
@@ -17,7 +17,7 @@ OBJS      := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
 all: $(BIN)
 
 $(BIN): $(OBJS) | $(BLD_DIR)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 	sudo setcap cap_net_raw+ep $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)

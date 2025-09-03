@@ -1,190 +1,263 @@
 #include "../include/ft_ping.h"
 
-char *format =
-	"PING google.com (142.250.201.174) 56(84) bytes of data.\n"
-	"64 bytes from 142.250.201.174: icmp_seq=1 ttl=116 time=3.81 ms\n"
+#define DATA_LEN   56
+#define PACKET_LEN (sizeof(struct icmphdr) + DATA_LEN)
 
-	"--- google.com ping statistics ---\n"
-	"3 packets transmitted, 3 received, 0%% packet loss, time 2182ms\n"
-	"rtt min/avg/max/mdev = 3.814/4.596/5.157/0.570 ms\n";
+struct stats g_stats;
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>		 // AF_INET
-#include <netinet/ip_icmp.h> // IPPROTO_ICMP
-#include <errno.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/time.h> // gettimeofday
-#include <arpa/inet.h>
-#include <netinet/ip.h> // struct iphdr
-#include <stdbool.h>
+// local flags used across functions (don't depend on externs)
+static bool        g_verbose = false;
+static const char *g_target  = NULL;
 
-int internal_socket(void)
+static const char *icmp_error_desc(uint8_t type, uint8_t code)
 {
-	int sockfd;
-
-	// needs root privileges
-	// tips: sudo setcap cap_net_raw+ep ./ft_ping
-	sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-	if (sockfd < 0)
-	{
-		perror("socket");
-		exit(EXIT_FAILURE);
-	}
-	return sockfd;
+    switch (type) {
+        case ICMP_DEST_UNREACH:
+            switch (code) {
+                case ICMP_NET_UNREACH:   return "Destination Net Unreachable";
+                case ICMP_HOST_UNREACH:  return "Destination Host Unreachable";
+                case ICMP_PROT_UNREACH:  return "Destination Protocol Unreachable";
+                case ICMP_PORT_UNREACH:  return "Destination Port Unreachable";
+                case ICMP_FRAG_NEEDED:   return "Frag needed and DF set";
+                case ICMP_SR_FAILED:     return "Source Route Failed";
+                case ICMP_NET_UNKNOWN:   return "Destination Net Unknown";
+                case ICMP_HOST_UNKNOWN:  return "Destination Host Unknown";
+                case ICMP_HOST_ISOLATED: return "Source Host Isolated";
+                case ICMP_NET_ANO:       return "Net Administratively Prohibited";
+                case ICMP_HOST_ANO:      return "Host Administratively Prohibited";
+                case ICMP_NET_UNR_TOS:   return "Net Unreachable for TOS";
+                case ICMP_HOST_UNR_TOS:  return "Host Unreachable for TOS";
+                case ICMP_PKT_FILTERED:  return "Packet filtered";
+                case ICMP_PREC_VIOLATION:return "Precedence Violation";
+                case ICMP_PREC_CUTOFF:   return "Precedence Cutoff";
+                default:                 return "Destination Unreachable";
+            }
+        case ICMP_TIME_EXCEEDED:
+            if (code == ICMP_EXC_TTL)      return "Time to live exceeded";
+            if (code == ICMP_EXC_FRAGTIME) return "Frag reassembly time exceeded";
+            return "Time exceeded";
+        case ICMP_PARAMETERPROB: return "Parameter problem";
+        case ICMP_SOURCE_QUENCH: return "Source quench";
+        case ICMP_REDIRECT:
+            switch (code) {
+                case ICMP_REDIRECT_NET:    return "Redirect Network";
+                case ICMP_REDIRECT_HOST:   return "Redirect Host";
+                case ICMP_REDIRECT_TOSNET: return "Redirect Type of Service and Network";
+                case ICMP_REDIRECT_TOSHOST:return "Redirect Type of Service and Host";
+                default: return "Redirect";
+            }
+        default:
+            return "ICMP error";
+    }
 }
 
-#define PACKET_SIZE 64
-
-unsigned short calculate_checksum(void *b, int len)
+void handle_sigint(int sig)
 {
-	unsigned short *buf = b;
-	unsigned int sum = 0;
-	unsigned short result;
+    (void)sig; // unused
+    gettimeofday(&g_stats.t_end, NULL);
 
-	for (sum = 0; len > 1; len -= 2)
-		sum += *buf++;
+    int lost = g_stats.transmitted - g_stats.received;
+    double loss = (g_stats.transmitted > 0)
+                      ? (100.0 * lost / g_stats.transmitted)
+                      : 0.0;
 
-	if (len == 1)
-		sum += *(unsigned char *)buf;
+    long elapsed_ms = (g_stats.t_end.tv_sec - g_stats.t_start.tv_sec) * 1000L
+                    + (g_stats.t_end.tv_usec - g_stats.t_start.tv_usec) / 1000L;
 
-	sum = (sum >> 16) + (sum & 0xFFFF);
-	sum += (sum >> 16);
-	result = ~sum;
-	return result;
+    double rtt_avg = (g_stats.received > 0) ? g_stats.rtt_sum / g_stats.received : 0.0;
+    double rtt_stddev = 0.0;
+    if (g_stats.received > 0) {
+        double mean = rtt_avg;
+        double variance = (g_stats.rtt_sumsq / g_stats.received) - (mean * mean);
+        if (variance > 0) rtt_stddev = sqrt(variance);
+    }
+
+    printf("\n--- %s ping statistics ---\n", g_target ? g_target : "ping");
+    printf("%d packets transmitted, %d received, %.0f%% packet loss, time %ldms\n",
+           g_stats.transmitted, g_stats.received, loss, elapsed_ms);
+
+    if (g_stats.received > 0) {
+        printf("round-trip min/avg/max/stddev = %.3f/%.3f/%.3f/%.3f ms\n",
+               g_stats.rtt_min, rtt_avg, g_stats.rtt_max, rtt_stddev);
+    }
+
+    exit(EXIT_SUCCESS);
 }
 
-int create_icmp_packet(char *packet, int seq)
+// Build an ICMP Echo Request packet (header + 56 bytes data)
+static size_t create_icmp_packet(unsigned char *buf, int seq, int id)
 {
-	struct icmphdr *icmp_hdr;
-	struct timeval *time_payload;
+    memset(buf, 0, PACKET_LEN);
 
-	memset(packet, 0, PACKET_SIZE);
+    struct icmphdr *icmp_hdr = (struct icmphdr *)buf;
+    icmp_hdr->type = ICMP_ECHO;
+    icmp_hdr->code = 0;
+    icmp_hdr->un.echo.id = htons(id);
+    icmp_hdr->un.echo.sequence = htons(seq);
 
-	icmp_hdr = (struct icmphdr *)packet;
+    // Put a timestamp in the first bytes of the payload
+    struct timeval *tv = (struct timeval *)(buf + sizeof(*icmp_hdr));
+    gettimeofday(tv, NULL);
 
-	icmp_hdr->type = ICMP_ECHO;
-	icmp_hdr->code = 0;
-	icmp_hdr->un.echo.id = getpid() & 0xFFFF;
-	icmp_hdr->un.echo.sequence = seq;
+    // Fill remaining payload with a simple pattern
+    unsigned char *payload = (unsigned char *)tv + sizeof(*tv);
+    size_t pattern_len = DATA_LEN - sizeof(*tv);
+    for (size_t i = 0; i < pattern_len; i++)
+        payload[i] = (unsigned char)(i & 0xFF);
 
-	time_payload = (struct timeval *)(packet + sizeof(struct icmphdr));
-	gettimeofday(time_payload, NULL);
-
-	icmp_hdr->checksum = calculate_checksum(packet, PACKET_SIZE);
-
-	return PACKET_SIZE;
+    icmp_hdr->checksum = 0;
+    icmp_hdr->checksum = calculate_checksum(buf, PACKET_LEN);
+    return PACKET_LEN;
 }
 
-void internal_inet_pton(const char *ip_address, struct sockaddr_in *dest_addr)
+// Receives one packet; returns:
+//   1 on echo reply success
+//   0 on non-echo packet processed (verbose info possibly printed)
+//  -2 on timeout
+//  -1 on error / ignore
+static int receive_ping(int sockfd, int id)
 {
-	if (inet_pton(AF_INET, ip_address, &(dest_addr->sin_addr)) < 0)
-	{
-		perror("inet_pton");
-		exit(EXIT_FAILURE);
-	}
-}
+    unsigned char buffer[2048];
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
 
-void internal_sendto(int fd, const void *buf, size_t n, int flags, const struct sockaddr *addr, socklen_t addr_len)
-{
-	if (sendto(fd, buf, n, flags, addr, addr_len) <= 0)
-	{
-		perror("sendto");
-		close(fd);
-		exit(EXIT_FAILURE);
-	}
-}
+    int bytes_received = recvfrom(sockfd, buffer, sizeof(buffer), 0,
+                                  (struct sockaddr *)&addr, &addr_len);
+    if (bytes_received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return -2; // timeout
+        perror("ft_ping: recvfrom");
+        return -1;
+    }
 
-int receive_ping(int sockfd)
-{
-	char buffer[PACKET_SIZE];
-	struct sockaddr_in addr;
-	socklen_t addr_len = sizeof(addr);
-	int bytes_received;
+    struct iphdr *ip_hdr = (struct iphdr *)buffer;
+    int ip_header_len = ip_hdr->ihl * 4;
+    if (bytes_received < ip_header_len + (int)sizeof(struct icmphdr)) {
+        if (g_verbose) {
+            fprintf(stderr, "ft_ping: packet too short (%d bytes) from %s\n",
+                    bytes_received, inet_ntoa(addr.sin_addr));
+        }
+        return -1;
+    }
 
-	// wait response
-	bytes_received = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr *)&addr, &addr_len);
-	if (bytes_received < 0)
-	{
-		perror("recvfrom");
-		return -1;
-	}
+    struct icmphdr *icmp_hdr = (struct icmphdr *)(buffer + ip_header_len);
 
-	// interpret buffer
-	struct iphdr *ip_hdr = (struct iphdr *)buffer; // buffer start : IP header
-	int ip_header_len = ip_hdr->ihl * 4;		   // size of IP header (ihl = Internet Header Length)
+    if (icmp_hdr->type == ICMP_ECHOREPLY && ntohs(icmp_hdr->un.echo.id) == id) {
+        // RTT from our timestamp payload
+        struct timeval *tv_send = (struct timeval *)(buffer + ip_header_len + sizeof(*icmp_hdr));
+        struct timeval tv_recv; gettimeofday(&tv_recv, NULL);
 
-	struct icmphdr *icmp_hdr = (struct icmphdr *)(buffer + ip_header_len); // ICMP header is after IP header
+        double rtt_ms = (tv_recv.tv_sec - tv_send->tv_sec) * 1000.0 +
+                        (tv_recv.tv_usec - tv_send->tv_usec) / 1000.0;
 
-	if (icmp_hdr->type == ICMP_ECHOREPLY)
-	{
-		printf("id: %d -> ", icmp_hdr->un.echo.id);
-		printf("%d bytes from %s: icmp_seq=%d ttl=??? time=?.?? ms\n", PACKET_SIZE, inet_ntoa(addr.sin_addr), icmp_hdr->un.echo.sequence);
-		// printf("Received ICMP Echo Reply from %s\n", inet_ntoa(addr.sin_addr));
-		// printf("Sequence: %d, ID: %d\n", ntohs(icmp_hdr->un.echo.sequence), ntohs(icmp_hdr->un.echo.id));
-		return 0;
-	}
-	else
-	{
-		// printf("id: %d\n", icmp_hdr->un.echo.id);
-		//     printf("Received unexpected ICMP type: %d\n", icmp_hdr->type);
-		return -1;
-	}
-	// return -1;
+        g_stats.received++;
+        if (rtt_ms < g_stats.rtt_min) g_stats.rtt_min = rtt_ms;
+        if (rtt_ms > g_stats.rtt_max) g_stats.rtt_max = rtt_ms;
+        g_stats.rtt_sum += rtt_ms;
+        g_stats.rtt_sumsq += (rtt_ms * rtt_ms);
+
+        printf("%d bytes from %s: icmp_seq=%d ttl=%d time=%.3f ms\n",
+               bytes_received - ip_header_len,
+               inet_ntoa(addr.sin_addr),
+               ntohs(icmp_hdr->un.echo.sequence),
+               ip_hdr->ttl,
+               rtt_ms);
+        return 1;
+    }
+
+    // Non-echo ICMP (errors etc.) -- show with -v
+    if (g_verbose) {
+        const char *desc = icmp_error_desc(icmp_hdr->type, icmp_hdr->code);
+
+        // Try to extract original sequence number (best-effort)
+        int seq = -1;
+        if (bytes_received >= ip_header_len + (int)sizeof(struct icmphdr) + (int)sizeof(struct iphdr) + (int)sizeof(struct icmphdr)) {
+            struct iphdr *inner_ip = (struct iphdr *)(buffer + ip_header_len + sizeof(struct icmphdr));
+            int ihl2 = inner_ip->ihl * 4;
+            if (bytes_received >= ip_header_len + (int)sizeof(struct icmphdr) + ihl2 + (int)sizeof(struct icmphdr)) {
+                struct icmphdr *inner_icmp = (struct icmphdr *)((unsigned char *)inner_ip + ihl2);
+                seq = ntohs(inner_icmp->un.echo.sequence);
+            }
+        }
+
+        if (seq >= 0)
+            printf("From %s: icmp_seq=%d %s (type=%u code=%u)\n",
+                   inet_ntoa(addr.sin_addr), seq, desc, icmp_hdr->type, icmp_hdr->code);
+        else
+            printf("From %s: %s (type=%u code=%u)\n",
+                   inet_ntoa(addr.sin_addr), desc, icmp_hdr->type, icmp_hdr->code);
+        return 0;
+    }
+
+    return -1; // ignore silently
 }
 
 int main(int argc, char *argv[])
 {
-	t_opts o;
-	if (parse_args(argc, argv, &o) != 0)
-		return 1;
-	if (o.help)
-	{
-		print_usage(stdout);
-		return 0;
-	}
+    signal(SIGINT, handle_sigint);
+    gettimeofday(&g_stats.t_start, NULL);
+    g_stats.transmitted = 0;
+    g_stats.received    = 0;
+    g_stats.rtt_min     = 1e9;
+    g_stats.rtt_max     = 0;
+    g_stats.rtt_sum     = 0;
+    g_stats.rtt_sumsq   = 0;
 
-	char ip_str[INET_ADDRSTRLEN];
-	if (!forward_dns_resolution(o.target, ip_str))
-	{
-		printf("forward_dns_resolution failed\n");
-		return 1;
-	}
-	printf("Resolved %s -> %s\n", o.target, ip_str);
-	// ---
-	int sockfd;
-	struct sockaddr_in dest_addr;
-	char packet[PACKET_SIZE];
-	int packet_len;
+    t_opts o;
+    if (parse_args(argc, argv, &o) != 0)
+        return 1;
+    if (o.help) {
+        print_usage(stdout);
+        return 0;
+    }
+    g_verbose = o.verbose;
+    g_target  = o.target;
 
-	// create the raw icmp socket
-	sockfd = internal_socket();
+    struct sockaddr_in dst;
+    char ip_str[INET_ADDRSTRLEN];
 
-	// prepare the destination address
-	memset(&dest_addr, 0, sizeof(dest_addr));
-	dest_addr.sin_family = AF_INET;
-	internal_inet_pton(ip_str, &dest_addr);
+    if (!forward_dns_resolution(o.target, ip_str, &dst)) {
+        fprintf(stderr, "ft_ping: DNS resolution failed for '%s'\n", o.target);
+        return 1;
+    }
 
-	int seq = 1;
-	while (1)
-	{
-		// prepare the icmp packet
-		packet_len = create_icmp_packet(packet, seq);
+    printf("PING %s (%s): %d data bytes\n", o.target, ip_str, DATA_LEN);
 
-		internal_sendto(sockfd, packet, packet_len, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    // Prepare raw ICMP socket
+    int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sockfd < 0) {
+        perror("ft_ping: socket");
+        exit(EXIT_FAILURE);
+    }
 
-		while (receive_ping(sockfd) <= -1)
-		{
-			usleep(500000);
-		}
+    // Optional but recommended: 1s receive timeout so we can show timeouts
+    struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-		usleep(500000);
-		seq++;
-	}
+    int id  = getpid() & 0xFFFF;
+    int seq = 1;
 
-	close(sockfd);
-	return 0;
+    while (1) {
+        unsigned char packet[PACKET_LEN];
+        size_t packet_len = create_icmp_packet(packet, seq, id);
+
+        if (sendto(sockfd, packet, packet_len, 0, (struct sockaddr *)&dst, sizeof(dst)) <= 0) {
+            perror("ft_ping: sendto");
+            break;
+        }
+        g_stats.transmitted++;
+
+        int rc = receive_ping(sockfd, id);
+        if (rc == -2) {
+            // timeout
+            printf("Request timeout for icmp_seq %d\n", seq);
+        }
+        // rc==1 success, rc==0 verbose already printed, rc==-1 ignore
+
+        seq++;
+        sleep(1);
+    }
+
+    close(sockfd);
+    return 0;
 }
