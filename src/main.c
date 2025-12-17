@@ -241,11 +241,16 @@ int main(int argc, char *argv[])
         unsigned char packet[PACKET_LEN];
         size_t packet_len = create_icmp_packet(packet, seq, id);
 
-        if (sendto(sockfd, packet, packet_len, 0, (struct sockaddr *)&dst, sizeof(dst)) <= 0) {
-            perror("ft_ping: sendto");
-            break;
-        }
-        g_stats.transmitted++;
+		ssize_t sent = sendto(sockfd, packet, packet_len, 0, (struct sockaddr *)&dst, sizeof(dst));
+
+		g_stats.transmitted++;
+
+		if (sent < 0)
+		{
+			seq++;
+			sleep(1);
+			continue;
+		}
 
         int rc = receive_ping(sockfd, id);
         if (rc == -2) {
