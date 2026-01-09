@@ -1,39 +1,37 @@
-NAME      := ft_ping
+NAME        := ft_ping
 
-SRC_DIR   := src
-INC_DIR   := include
-BLD_DIR   := build
-OBJ_DIR   := $(BLD_DIR)/obj
-BIN       := $(BLD_DIR)/$(NAME)
+SRCS_DIR    := srcs
+OBJS_DIR    := objs
+INC_DIR     := incs
 
-CC        := cc
-CFLAGS    := -Wall -Wextra -Werror -I$(INC_DIR)
-LDFLAGS   := -lm                       # (libs will be there)
+CC          := cc
+CFLAGS      := -Wall -Wextra -Werror -lm -I$(INC_DIR)
 
-SRCS      := $(wildcard $(SRC_DIR)/*.c)
-OBJS      := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
+SRCS        := $(wildcard $(SRCS_DIR)/*.c)
+OBJS        := $(SRCS:$(SRCS_DIR)/%.c=$(OBJS_DIR)/%.o)
+HEADERS     := $(wildcard $(INC_DIR)/*.h)
 
+all: $(NAME)
 
-all: $(BIN)
+$(OBJS_DIR):
+	mkdir -p $(OBJS_DIR)
 
-$(BIN): $(OBJS) | $(BLD_DIR)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-	sudo setcap cap_net_raw+ep $@
-
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+$(OBJS_DIR)/%.o: $(SRCS_DIR)/%.c $(HEADERS) | $(OBJS_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BLD_DIR)  :
-	@mkdir -p $@
-$(OBJ_DIR)  :
-	@mkdir -p $@
+$(NAME): $(OBJS)
+	$(CC) $(CFLAGS) $^ -o $@
+	sudo setcap cap_net_raw+ep $@
 
 clean:
-	$(RM) -r $(OBJ_DIR)
+	rm -rf $(OBJS_DIR)
 
 fclean: clean
-	$(RM) -r $(BIN)
+	rm -f $(NAME)
 
 re: fclean all
 
-.PHONY: all clean fclean re
+debug: CFLAGS += -g3 -fsanitize=address,undefined
+debug: re
+
+.PHONY: all clean fclean re debug

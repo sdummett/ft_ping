@@ -1,4 +1,4 @@
-#include "../include/ft_ping.h"
+#include "ft_ping.h"
 
 #define DATA_LEN   56
 #define PACKET_LEN (sizeof(struct icmphdr) + DATA_LEN)
