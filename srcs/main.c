@@ -1,8 +1,5 @@
 #include "ft_ping.h"
 
-#define DATA_LEN 56
-#define PACKET_LEN (sizeof(struct icmphdr) + DATA_LEN)
-
 struct stats g_stats;
 
 // local flags used across functions (don't depend on externs)
@@ -64,14 +61,18 @@ static const char *icmp_error_desc(uint8_t type, uint8_t code)
 	case ICMP_REDIRECT:
 		switch (code)
 		{
-		case ICMP_REDIRECT_NET:
+		case ICMP_REDIR_NET:
 			return "Redirect Network";
-		case ICMP_REDIRECT_HOST:
+		case ICMP_REDIR_HOST:
 			return "Redirect Host";
-		case ICMP_REDIRECT_TOSNET:
+#ifdef ICMP_REDIR_TOSNET
+		case ICMP_REDIR_TOSNET:
 			return "Redirect Type of Service and Network";
-		case ICMP_REDIRECT_TOSHOST:
+#endif
+#ifdef ICMP_REDIR_TOSHOST
+		case ICMP_REDIR_TOSHOST:
 			return "Redirect Type of Service and Host";
+#endif
 		default:
 			return "Redirect";
 		}
@@ -244,27 +245,23 @@ int main(int argc, char *argv[])
 	g_stats.rtt_sum = 0;
 	g_stats.rtt_sumsq = 0;
 
-	t_opts o;
-	if (parse_args(argc, argv, &o) != 0)
+	t_opts opts;
+	if (parse_args(argc, argv, &opts) != 0)
 		return 1;
-	if (o.help)
-	{
-		print_usage(stdout);
-		return 0;
-	}
-	g_verbose = o.verbose;
-	g_target = o.target;
+
+	g_verbose = opts.verbose;
+	g_target = opts.host;
 
 	struct sockaddr_in dst;
 	char ip_str[INET_ADDRSTRLEN];
 
-	if (!forward_dns_resolution(o.target, ip_str, &dst))
+	if (!forward_dns_resolution(opts.host, ip_str, &dst))
 	{
-		fprintf(stderr, "ft_ping: DNS resolution failed for '%s'\n", o.target);
+		fprintf(stderr, "ft_ping: DNS resolution failed for '%s'\n", opts.host);
 		return 1;
 	}
 
-	printf("PING %s (%s): %d data bytes\n", o.target, ip_str, DATA_LEN);
+	printf("PING %s (%s): %d data bytes\n", opts.host, ip_str, DATA_LEN);
 
 	// Prepare raw ICMP socket
 	int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);

@@ -1,79 +1,49 @@
 #include "ft_ping.h"
 
-void print_usage(FILE *out)
+static char doc[] = "Send ICMP ECHO_REQUEST packets to network hosts.";
+static char args_doc[] = "host";
+
+static struct argp_option g_argp_options[] = {
+	{"verbose", 'v', 0, 0, "Verbose output", 0},
+	{0, 'h', 0, OPTION_HIDDEN, 0, 0},
+	{0}};
+
+static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
-	fprintf(out,
-			"Usage: ft_ping [-v] [-?] destination\n"
-			"  -v   verbose output (list non-echo ICMP replies)\n"
-			"  -?   help (show this usage message)\n");
+	t_opts *opts = (t_opts *)state->input;
+
+	switch (key)
+	{
+	case 'v':
+		opts->verbose = true;
+		break;
+	case 'h':
+		argp_state_help(state, state->out_stream, ARGP_HELP_STD_HELP);
+		break;
+	case ARGP_KEY_ARG:
+		if (opts->host)
+			argp_error(state, "too many arguments: '%s'", arg);
+		opts->host = arg;
+		break;
+	case ARGP_KEY_END:
+		if (!opts->host)
+			argp_error(state, "missing host");
+		break;
+	default:
+		return ARGP_ERR_UNKNOWN;
+	}
+	return 0;
 }
+
+static struct argp g_argp = {g_argp_options, parse_opt, args_doc, doc, 0, 0, 0};
 
 int parse_args(int argc, char **argv, t_opts *opts)
 {
-	// defaults
+	// default options value
 	opts->verbose = false;
 	opts->help = false;
-	opts->target = NULL;
+	opts->host = NULL;
 
-	for (int i = 1; i < argc; ++i)
-	{
-		const char *arg = argv[i];
-
-		if (strcmp(arg, "--") == 0)
-		{
-			if (i + 1 < argc)
-			{
-				if (opts->target)
-				{
-					fprintf(stderr, "ft_ping: too many arguments: '%s'\n", argv[i + 1]);
-					print_usage(stderr);
-					return -1;
-				}
-				opts->target = argv[++i];
-			}
-			continue;
-		}
-
-		if (arg[0] == '-' && arg[1] != '\0')
-		{
-			for (size_t j = 1; arg[j] != '\0'; ++j)
-			{
-				switch (arg[j])
-				{
-				case 'v':
-					opts->verbose = true;
-					break;
-				case '?':
-					opts->help = true;
-					break;
-				default:
-					fprintf(stderr, "ft_ping: illegal option -- %c\n", arg[j]);
-					print_usage(stderr);
-					return -1;
-				}
-			}
-			continue;
-		}
-
-		// target
-		if (!opts->target)
-		{
-			opts->target = arg;
-		}
-		else
-		{
-			fprintf(stderr, "ft_ping: too many arguments: '%s'\n", arg);
-			print_usage(stderr);
-			return -1;
-		}
-	}
-
-	if (!opts->help && !opts->target)
-	{
-		fprintf(stderr, "ft_ping: missing destination\n");
-		print_usage(stderr);
-		return -1;
-	}
-
+	argp_parse(&g_argp, argc, argv, 0, 0, opts);
 	return 0;
 }

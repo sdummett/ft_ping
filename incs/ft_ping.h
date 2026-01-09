@@ -15,6 +15,7 @@
 #include <math.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <argp.h>
 
 // Reference: inetutils ping default data size is 56 bytes (64 with ICMP header).
 // See GNU inetutils manual.
@@ -23,9 +24,9 @@
 
 typedef struct s_opts
 {
-	bool verbose;		// -v
-	bool help;			// -?
-	const char *target; // destination (FQDN or IPv4)
+	bool verbose;	  // -v | --verbose
+	bool help;		  // -h | -? | --help
+	const char *host; // host (FQDN or IPv4)
 } t_opts;
 
 struct stats
@@ -42,9 +43,7 @@ struct stats
 
 // Globals (defined in main.c)
 extern struct stats g_stats;
-extern t_opts g_opts;
 
-void print_usage(FILE *out);
 int parse_args(int argc, char **argv, t_opts *opts);
 bool forward_dns_resolution(const char *hostname, char ip_str[INET_ADDRSTRLEN], struct sockaddr_in *dst);
 unsigned short calculate_checksum(void *b, int len);
