@@ -6,80 +6,80 @@ struct stats g_stats;
 static bool g_verbose = false;
 static const char *g_target = NULL;
 
-static const char *icmp_error_desc(uint8_t type, uint8_t code)
-{
-	switch (type)
-	{
-	case ICMP_DEST_UNREACH:
-		switch (code)
-		{
-		case ICMP_NET_UNREACH:
-			return "Destination Net Unreachable";
-		case ICMP_HOST_UNREACH:
-			return "Destination Host Unreachable";
-		case ICMP_PROT_UNREACH:
-			return "Destination Protocol Unreachable";
-		case ICMP_PORT_UNREACH:
-			return "Destination Port Unreachable";
-		case ICMP_FRAG_NEEDED:
-			return "Frag needed and DF set";
-		case ICMP_SR_FAILED:
-			return "Source Route Failed";
-		case ICMP_NET_UNKNOWN:
-			return "Destination Net Unknown";
-		case ICMP_HOST_UNKNOWN:
-			return "Destination Host Unknown";
-		case ICMP_HOST_ISOLATED:
-			return "Source Host Isolated";
-		case ICMP_NET_ANO:
-			return "Net Administratively Prohibited";
-		case ICMP_HOST_ANO:
-			return "Host Administratively Prohibited";
-		case ICMP_NET_UNR_TOS:
-			return "Net Unreachable for TOS";
-		case ICMP_HOST_UNR_TOS:
-			return "Host Unreachable for TOS";
-		case ICMP_PKT_FILTERED:
-			return "Packet filtered";
-		case ICMP_PREC_VIOLATION:
-			return "Precedence Violation";
-		case ICMP_PREC_CUTOFF:
-			return "Precedence Cutoff";
-		default:
-			return "Destination Unreachable";
-		}
-	case ICMP_TIME_EXCEEDED:
-		if (code == ICMP_EXC_TTL)
-			return "Time to live exceeded";
-		if (code == ICMP_EXC_FRAGTIME)
-			return "Frag reassembly time exceeded";
-		return "Time exceeded";
-	case ICMP_PARAMETERPROB:
-		return "Parameter problem";
-	case ICMP_SOURCE_QUENCH:
-		return "Source quench";
-	case ICMP_REDIRECT:
-		switch (code)
-		{
-		case ICMP_REDIR_NET:
-			return "Redirect Network";
-		case ICMP_REDIR_HOST:
-			return "Redirect Host";
-#ifdef ICMP_REDIR_TOSNET
-		case ICMP_REDIR_TOSNET:
-			return "Redirect Type of Service and Network";
-#endif
-#ifdef ICMP_REDIR_TOSHOST
-		case ICMP_REDIR_TOSHOST:
-			return "Redirect Type of Service and Host";
-#endif
-		default:
-			return "Redirect";
-		}
-	default:
-		return "ICMP error";
-	}
-}
+// static const char *icmp_error_desc(uint8_t type, uint8_t code)
+// {
+// 	switch (type)
+// 	{
+// 	case ICMP_DEST_UNREACH:
+// 		switch (code)
+// 		{
+// 		case ICMP_NET_UNREACH:
+// 			return "Destination Net Unreachable";
+// 		case ICMP_HOST_UNREACH:
+// 			return "Destination Host Unreachable";
+// 		case ICMP_PROT_UNREACH:
+// 			return "Destination Protocol Unreachable";
+// 		case ICMP_PORT_UNREACH:
+// 			return "Destination Port Unreachable";
+// 		case ICMP_FRAG_NEEDED:
+// 			return "Frag needed and DF set";
+// 		case ICMP_SR_FAILED:
+// 			return "Source Route Failed";
+// 		case ICMP_NET_UNKNOWN:
+// 			return "Destination Net Unknown";
+// 		case ICMP_HOST_UNKNOWN:
+// 			return "Destination Host Unknown";
+// 		case ICMP_HOST_ISOLATED:
+// 			return "Source Host Isolated";
+// 		case ICMP_NET_ANO:
+// 			return "Net Administratively Prohibited";
+// 		case ICMP_HOST_ANO:
+// 			return "Host Administratively Prohibited";
+// 		case ICMP_NET_UNR_TOS:
+// 			return "Net Unreachable for TOS";
+// 		case ICMP_HOST_UNR_TOS:
+// 			return "Host Unreachable for TOS";
+// 		case ICMP_PKT_FILTERED:
+// 			return "Packet filtered";
+// 		case ICMP_PREC_VIOLATION:
+// 			return "Precedence Violation";
+// 		case ICMP_PREC_CUTOFF:
+// 			return "Precedence Cutoff";
+// 		default:
+// 			return "Destination Unreachable";
+// 		}
+// 	case ICMP_TIME_EXCEEDED:
+// 		if (code == ICMP_EXC_TTL)
+// 			return "Time to live exceeded";
+// 		if (code == ICMP_EXC_FRAGTIME)
+// 			return "Frag reassembly time exceeded";
+// 		return "Time exceeded";
+// 	case ICMP_PARAMETERPROB:
+// 		return "Parameter problem";
+// 	case ICMP_SOURCE_QUENCH:
+// 		return "Source quench";
+// 	case ICMP_REDIRECT:
+// 		switch (code)
+// 		{
+// 		case ICMP_REDIR_NET:
+// 			return "Redirect Network";
+// 		case ICMP_REDIR_HOST:
+// 			return "Redirect Host";
+// #ifdef ICMP_REDIR_TOSNET
+// 		case ICMP_REDIR_TOSNET:
+// 			return "Redirect Type of Service and Network";
+// #endif
+// #ifdef ICMP_REDIR_TOSHOST
+// 		case ICMP_REDIR_TOSHOST:
+// 			return "Redirect Type of Service and Host";
+// #endif
+// 		default:
+// 			return "Redirect";
+// 		}
+// 	default:
+// 		return "ICMP error";
+// 	}
+// }
 
 void handle_sigint(int sig)
 {
@@ -147,93 +147,78 @@ static size_t create_icmp_packet(unsigned char *buf, int seq, int id)
 //   0 on non-echo packet processed (verbose info possibly printed)
 //  -2 on timeout
 //  -1 on error / ignore
-static int receive_ping(int sockfd, int id)
+static int receive_ping(int sockfd, int id, int expected_seq)
 {
 	unsigned char buffer[2048];
 	struct sockaddr_in addr;
 	socklen_t addr_len = sizeof(addr);
 
-	int bytes_received = recvfrom(sockfd, buffer, sizeof(buffer), 0,
-								  (struct sockaddr *)&addr, &addr_len);
-	if (bytes_received < 0)
+	for (;;)
 	{
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			return -2; // timeout
-		perror("ft_ping: recvfrom");
-		return -1;
-	}
-
-	struct iphdr *ip_hdr = (struct iphdr *)buffer;
-	int ip_header_len = ip_hdr->ihl * 4;
-	if (bytes_received < ip_header_len + (int)sizeof(struct icmphdr))
-	{
-		if (g_verbose)
+		addr_len = sizeof(addr);
+		int bytes_received = recvfrom(sockfd, buffer, sizeof(buffer), 0,
+									  (struct sockaddr *)&addr, &addr_len);
+		if (bytes_received < 0)
 		{
-			fprintf(stderr, "ft_ping: packet too short (%d bytes) from %s\n",
-					bytes_received, inet_ntoa(addr.sin_addr));
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				return -2; // timeout
+			perror("ft_ping: recvfrom");
+			return -1;
 		}
-		return -1;
-	}
 
-	struct icmphdr *icmp_hdr = (struct icmphdr *)(buffer + ip_header_len);
-
-	if (icmp_hdr->type == ICMP_ECHOREPLY && ntohs(icmp_hdr->un.echo.id) == id)
-	{
-		// RTT from our timestamp payload
-		struct timeval *tv_send = (struct timeval *)(buffer + ip_header_len + sizeof(*icmp_hdr));
-		struct timeval tv_recv;
-		gettimeofday(&tv_recv, NULL);
-
-		double rtt_ms = (tv_recv.tv_sec - tv_send->tv_sec) * 1000.0 +
-						(tv_recv.tv_usec - tv_send->tv_usec) / 1000.0;
-
-		g_stats.received++;
-		if (rtt_ms < g_stats.rtt_min)
-			g_stats.rtt_min = rtt_ms;
-		if (rtt_ms > g_stats.rtt_max)
-			g_stats.rtt_max = rtt_ms;
-		g_stats.rtt_sum += rtt_ms;
-		g_stats.rtt_sumsq += (rtt_ms * rtt_ms);
-
-		printf("%d bytes from %s: icmp_seq=%d ttl=%d time=%.3f ms\n",
-			   bytes_received - ip_header_len,
-			   inet_ntoa(addr.sin_addr),
-			   ntohs(icmp_hdr->un.echo.sequence),
-			   ip_hdr->ttl,
-			   rtt_ms);
-		return 1;
-	}
-
-	// Non-echo ICMP (errors etc.) -- show with -v
-	if (g_verbose)
-	{
-		const char *desc = icmp_error_desc(icmp_hdr->type, icmp_hdr->code);
-
-		// Try to extract original sequence number (best-effort)
-		int seq = -1;
-		(void)seq;
-		(void)desc;
-		if (bytes_received >= ip_header_len + (int)sizeof(struct icmphdr) + (int)sizeof(struct iphdr) + (int)sizeof(struct icmphdr))
+		struct iphdr *ip_hdr = (struct iphdr *)buffer;
+		int ip_header_len = ip_hdr->ihl * 4;
+		if (bytes_received < ip_header_len + (int)sizeof(struct icmphdr))
 		{
-			struct iphdr *inner_ip = (struct iphdr *)(buffer + ip_header_len + sizeof(struct icmphdr));
-			int ihl2 = inner_ip->ihl * 4;
-			if (bytes_received >= ip_header_len + (int)sizeof(struct icmphdr) + ihl2 + (int)sizeof(struct icmphdr))
+			if (g_verbose)
 			{
-				struct icmphdr *inner_icmp = (struct icmphdr *)((unsigned char *)inner_ip + ihl2);
-				seq = ntohs(inner_icmp->un.echo.sequence);
+				fprintf(stderr, "ft_ping: packet too short (%d bytes) from %s\n",
+						bytes_received, inet_ntoa(addr.sin_addr));
 			}
+			continue;
 		}
 
-		// if (seq >= 0)
-		// 	printf("From %s: icmp_seq=%d %s (type=%u code=%u)\n",
-		// 		   inet_ntoa(addr.sin_addr), seq, desc, icmp_hdr->type, icmp_hdr->code);
-		// else
-		// 	printf("From %s: %s (type=%u code=%u)\n",
-		// 		   inet_ntoa(addr.sin_addr), desc, icmp_hdr->type, icmp_hdr->code);
-		// return 0;
-	}
+		struct icmphdr *icmp_hdr = (struct icmphdr *)(buffer + ip_header_len);
+		int pkt_id = ntohs(icmp_hdr->un.echo.id);
+		int pkt_seq = ntohs(icmp_hdr->un.echo.sequence);
 
-	return -1; // ignore silently
+		// Ignore packets not belonging to this process
+		if (pkt_id != id)
+			continue;
+
+		// Ignore our own outgoing echo requests
+		if (icmp_hdr->type == ICMP_ECHO)
+			continue;
+
+		if (icmp_hdr->type == ICMP_ECHOREPLY && pkt_seq == expected_seq)
+		{
+			struct timeval *tv_send =
+				(struct timeval *)(buffer + ip_header_len + sizeof(*icmp_hdr));
+			struct timeval tv_recv;
+			gettimeofday(&tv_recv, NULL);
+
+			double rtt_ms = (tv_recv.tv_sec - tv_send->tv_sec) * 1000.0 +
+							(tv_recv.tv_usec - tv_send->tv_usec) / 1000.0;
+
+			g_stats.received++;
+			if (rtt_ms < g_stats.rtt_min)
+				g_stats.rtt_min = rtt_ms;
+			if (rtt_ms > g_stats.rtt_max)
+				g_stats.rtt_max = rtt_ms;
+			g_stats.rtt_sum += rtt_ms;
+			g_stats.rtt_sumsq += (rtt_ms * rtt_ms);
+
+			printf("%d bytes from %s: icmp_seq=%d ttl=%d time=%.3f ms\n",
+				   bytes_received - ip_header_len,
+				   inet_ntoa(addr.sin_addr),
+				   pkt_seq,
+				   ip_hdr->ttl,
+				   rtt_ms);
+			return 1;
+		}
+
+		// Its our packet, but not the reply we're waiting for. Keep reading.
+	}
 }
 
 int main(int argc, char *argv[])
@@ -307,7 +292,7 @@ int main(int argc, char *argv[])
 	int id = getpid() & 0xFFFF;
 	int seq = 1;
 
-	while (opts.count == 0 || g_stats.received < opts.count)
+	while (opts.count == 0 || g_stats.transmitted < opts.count)
 	{
 		unsigned char packet[PACKET_LEN];
 		size_t packet_len = create_icmp_packet(packet, seq, id);
@@ -323,11 +308,13 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		int rc = receive_ping(sockfd, id);
+		int rc = receive_ping(sockfd, id, seq);
 		if (rc == -2)
 		{
 			// timeout
-			printf("Request timeout for icmp_seq %d\n", seq);
+			// printf("Request timeout for icmp_seq %d\n", seq);
+			seq++;
+			continue;
 		}
 		// rc==1 success, rc==0 verbose already printed, rc==-1 ignore
 
