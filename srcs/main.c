@@ -246,6 +246,7 @@ int main(int argc, char *argv[])
 	g_stats.rtt_sumsq = 0;
 
 	t_opts opts;
+
 	if (parse_args(argc, argv, &opts) != 0)
 		return 1;
 
@@ -278,7 +279,7 @@ int main(int argc, char *argv[])
 	int id = getpid() & 0xFFFF;
 	int seq = 1;
 
-	while (1)
+	while (opts.count == 0 || g_stats.received < opts.count)
 	{
 		unsigned char packet[PACKET_LEN];
 		size_t packet_len = create_icmp_packet(packet, seq, id);
@@ -305,6 +306,12 @@ int main(int argc, char *argv[])
 		seq++;
 		sleep(1);
 	}
+
+	// in case of option --count has been set
+	// TODO: need to create a function for the end of the
+	// program, to avoid calling handle_sigint
+	// because that make no sense here
+	handle_sigint(0);
 
 	close(sockfd);
 	return 0;
