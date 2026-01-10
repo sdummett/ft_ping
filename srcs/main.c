@@ -211,6 +211,8 @@ static int receive_ping(int sockfd, int id)
 
 		// Try to extract original sequence number (best-effort)
 		int seq = -1;
+		(void)seq;
+		(void)desc;
 		if (bytes_received >= ip_header_len + (int)sizeof(struct icmphdr) + (int)sizeof(struct iphdr) + (int)sizeof(struct icmphdr))
 		{
 			struct iphdr *inner_ip = (struct iphdr *)(buffer + ip_header_len + sizeof(struct icmphdr));
@@ -222,13 +224,13 @@ static int receive_ping(int sockfd, int id)
 			}
 		}
 
-		if (seq >= 0)
-			printf("From %s: icmp_seq=%d %s (type=%u code=%u)\n",
-				   inet_ntoa(addr.sin_addr), seq, desc, icmp_hdr->type, icmp_hdr->code);
-		else
-			printf("From %s: %s (type=%u code=%u)\n",
-				   inet_ntoa(addr.sin_addr), desc, icmp_hdr->type, icmp_hdr->code);
-		return 0;
+		// if (seq >= 0)
+		// 	printf("From %s: icmp_seq=%d %s (type=%u code=%u)\n",
+		// 		   inet_ntoa(addr.sin_addr), seq, desc, icmp_hdr->type, icmp_hdr->code);
+		// else
+		// 	printf("From %s: %s (type=%u code=%u)\n",
+		// 		   inet_ntoa(addr.sin_addr), desc, icmp_hdr->type, icmp_hdr->code);
+		// return 0;
 	}
 
 	return -1; // ignore silently
@@ -262,8 +264,6 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	printf("PING %s (%s): %d data bytes\n", opts.host, ip_str, DATA_LEN);
-
 	// Prepare raw ICMP socket
 	int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	if (sockfd < 0)
@@ -271,6 +271,34 @@ int main(int argc, char *argv[])
 		perror("ft_ping: socket");
 		exit(EXIT_FAILURE);
 	}
+
+	if (g_verbose)
+	{
+		int so_type = 0;
+		socklen_t optlen = sizeof(so_type);
+		const char *stype = "UNKNOWN";
+		if (getsockopt(sockfd, SOL_SOCKET, SO_TYPE, &so_type, &optlen) == 0)
+		{
+			if (so_type == SOCK_RAW)
+				stype = "SOCK_RAW";
+			else if (so_type == SOCK_DGRAM)
+				stype = "SOCK_DGRAM";
+			else if (so_type == SOCK_STREAM)
+				stype = "SOCK_STREAM";
+		}
+
+		fprintf(stderr,
+				"%s: sock4.fd: %d (socktype: %s), hints.ai_family: AF_INET\n", argv[0],
+				sockfd, stype);
+
+		fprintf(stderr, "%s: ai->ai_family: AF_INET, ai->ai_canonname: '%s'\n", argv[0], opts.host);
+	}
+	int ip_hlen = 20; // Size of a minimal IPv4 header
+	int icmp_hlen = (int)sizeof(struct icmphdr);
+	int total_ip_packet_size = ip_hlen + icmp_hlen + DATA_LEN;
+
+	printf("PING %s (%s) %d(%d) bytes of data.\n",
+		   opts.host, ip_str, DATA_LEN, total_ip_packet_size);
 
 	// Optional but recommended: 1s receive timeout so we can show timeouts
 	struct timeval tv = {.tv_sec = 1, .tv_usec = 0};

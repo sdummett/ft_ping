@@ -18,7 +18,7 @@
 #include <argp.h>
 
 // Reference: inetutils ping default data size is 56 bytes (64 with ICMP header).
-// See GNU inetutils manual.
+// See GNU inetutils-2.0 manual.
 #define DATA_LEN 56
 #define PACKET_LEN (sizeof(struct icmphdr) + DATA_LEN)
 
