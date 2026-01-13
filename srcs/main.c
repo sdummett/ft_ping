@@ -21,6 +21,19 @@ static void sleep_interval(double seconds)
 		;
 }
 
+static struct timeval tv_add_seconds(struct timeval t, int seconds)
+{
+	t.tv_sec += seconds;
+	return t;
+}
+
+static double tv_remaining_sec(struct timeval now, struct timeval deadline)
+{
+	double sec = (double)(deadline.tv_sec - now.tv_sec) +
+				 (double)(deadline.tv_usec - now.tv_usec) / 1000000.0;
+	return sec;
+}
+
 // static const char *icmp_error_desc(uint8_t type, uint8_t code)
 // {
 // 	switch (type)
@@ -96,9 +109,32 @@ static void sleep_interval(double seconds)
 // 	}
 // }
 
-void handle_sigint(int sig)
+static const char *icmp_error_desc(uint8_t type, uint8_t code)
 {
-	(void)sig; // unused
+	if (type == ICMP_DEST_UNREACH)
+	{
+		switch (code)
+		{
+		case ICMP_NET_UNREACH:
+			return "Destination Net Unreachable";
+		case ICMP_HOST_UNREACH:
+			return "Destination Host Unreachable";
+		case ICMP_PROT_UNREACH:
+			return "Destination Protocol Unreachable";
+		case ICMP_PORT_UNREACH:
+			return "Destination Port Unreachable";
+		default:
+			return "Destination Unreachable";
+		}
+	}
+	if (type == ICMP_TIME_EXCEEDED)
+		return "Time to live exceeded";
+	return "ICMP error";
+}
+
+static void print_stats_and_exit(int status)
+{
+	(void)status;
 	gettimeofday(&g_stats.t_end, NULL);
 
 	int lost = g_stats.transmitted - g_stats.received;
@@ -128,7 +164,13 @@ void handle_sigint(int sig)
 			   g_stats.rtt_min, rtt_avg, g_stats.rtt_max, rtt_stddev);
 	}
 
-	exit(EXIT_SUCCESS);
+	exit(status);
+}
+
+void handle_sigint(int sig)
+{
+	(void)sig;
+	print_stats_and_exit(EXIT_SUCCESS);
 }
 
 // Build an ICMP Echo Request packet (header + 56 bytes data)
@@ -232,6 +274,34 @@ static int receive_ping(int sockfd, int id, int expected_seq)
 			return 1;
 		}
 
+		// ICMP errors are sent back with the original IP header + 8 bytes of payload
+		// Try to match the embedded Echo Request (id/seq) so we can treat it as a
+		// network error notification for this probe
+		if (icmp_hdr->type != ICMP_ECHOREPLY && icmp_hdr->type != ICMP_ECHO)
+		{
+			unsigned char *payload = buffer + ip_header_len + (int)sizeof(*icmp_hdr);
+			int payload_len = bytes_received - (ip_header_len + (int)sizeof(*icmp_hdr));
+
+			if (payload_len >= (int)sizeof(struct iphdr) + 8)
+			{
+				struct iphdr *inner_ip = (struct iphdr *)payload;
+				int inner_ihl = inner_ip->ihl * 4;
+				if (payload_len >= inner_ihl + (int)sizeof(struct icmphdr))
+				{
+					struct icmphdr *inner_icmp = (struct icmphdr *)(payload + inner_ihl);
+					int inner_id = ntohs(inner_icmp->un.echo.id);
+					int inner_seq = ntohs(inner_icmp->un.echo.sequence);
+					if (inner_icmp->type == ICMP_ECHO && inner_id == id && inner_seq == expected_seq)
+					{
+						fprintf(stderr, "From %s: icmp_seq=%d %s\n",
+								inet_ntoa(addr.sin_addr), expected_seq,
+								icmp_error_desc(icmp_hdr->type, icmp_hdr->code));
+						return -3;
+					}
+				}
+			}
+		}
+
 		// Its our packet, but not the reply we're waiting for. Keep reading.
 	}
 }
@@ -332,15 +402,42 @@ int main(int argc, char *argv[])
 	printf("PING %s (%s) %d(%d) bytes of data.\n",
 		   opts.host, ip_str, DATA_LEN, total_ip_packet_size);
 
-	// Optional but recommended: 1s receive timeout so we can show timeouts
+	bool use_deadline = (opts.deadline > 0);
+	struct timeval t_deadline;
+	if (use_deadline)
+		t_deadline = tv_add_seconds(g_stats.t_start, opts.deadline);
+
+	// Receive timeout to avoid blocking forever
+	// If -w is used, this will be adjusted dynamically not to overshoot the deadline
 	struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
 	int id = getpid() & 0xFFFF;
 	int seq = 1;
 
-	while (opts.count == 0 || g_stats.transmitted < opts.count)
+	int exit_status = EXIT_SUCCESS;
+
+	while (1)
 	{
+		if (use_deadline)
+		{
+			struct timeval now;
+			gettimeofday(&now, NULL);
+			if (tv_remaining_sec(now, t_deadline) <= 0.0)
+				break;
+		}
+
+		if (!use_deadline)
+		{
+			if (opts.count != 0 && g_stats.transmitted >= opts.count)
+				break;
+		}
+		else
+		{
+			if (opts.count != 0 && g_stats.received >= opts.count)
+				break;
+		}
+
 		unsigned char packet[PACKET_LEN];
 		size_t packet_len = create_icmp_packet(packet, seq, id);
 
@@ -350,24 +447,52 @@ int main(int argc, char *argv[])
 
 		if (sent >= 0)
 		{
+			if (use_deadline)
+			{
+				struct timeval now;
+				gettimeofday(&now, NULL);
+				double rem = tv_remaining_sec(now, t_deadline);
+				if (rem <= 0.0)
+					break;
+				struct timeval rcv_to;
+				rcv_to.tv_sec = (time_t)fmin(1.0, rem);
+				rcv_to.tv_usec = (suseconds_t)((fmin(1.0, rem) - (double)rcv_to.tv_sec) * 1000000.0);
+				if (rcv_to.tv_usec < 0)
+					rcv_to.tv_usec = 0;
+				setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
+			}
+
 			int rc = receive_ping(sockfd, id, seq);
 			if (rc == -2)
 			{
 				// timeout
 				// printf("Request timeout for icmp_seq %d\n", seq);
 			}
+			else if (rc == -3)
+			{
+				exit_status = EXIT_FAILURE;
+				break;
+			}
 			// rc==1 success, rc==0 verbose already printed, rc==-1 ignore
 		}
 
 		seq++;
-		sleep_interval(opts.interval);
+		if (use_deadline)
+		{
+			struct timeval now;
+			gettimeofday(&now, NULL);
+			double rem = tv_remaining_sec(now, t_deadline);
+			if (rem <= 0.0)
+				break;
+			sleep_interval(fmin(opts.interval, rem));
+		}
+		else
+		{
+			sleep_interval(opts.interval);
+		}
 	}
 
-	// in case of option --count has been set
-	// TODO: need to create a function for the end of the
-	// program, to avoid calling handle_sigint
-	// because that make no sense here
-	handle_sigint(0);
+	print_stats_and_exit(exit_status);
 
 	close(sockfd);
 	return 0;

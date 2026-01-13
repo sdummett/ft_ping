@@ -28,6 +28,7 @@ typedef struct s_opts
 	bool verbose;	  // -v | --verbose
 	bool help;		  // -h | -? | --help
 	long count;		  // -c <count> (stop after <count> number of echo reply)
+	int deadline;	  // -w <deadline> (timeout in seconds before ping exits)
 	int ttl;		  // -t <ttl> | --ttl=<ttl> (IP time to live)
 	double interval;  // -i <interval> | --interval=<interval> (seconds between each packet)
 	const char *host; // host (FQDN or IPv4)
