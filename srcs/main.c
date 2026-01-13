@@ -257,6 +257,14 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	// Set outgoing IPv4 TTL (default: 64)
+	if (opts.ttl > 0)
+	{
+		int ttl = opts.ttl;
+		if (setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) != 0)
+			perror("ft_ping: setsockopt(IP_TTL)");
+	}
+
 	if (g_verbose)
 	{
 		int so_type = 0;

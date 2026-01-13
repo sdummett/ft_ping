@@ -27,6 +27,7 @@ typedef struct s_opts
 	bool verbose;	  // -v | --verbose
 	bool help;		  // -h | -? | --help
 	long count;		  // -c <count> (stop after <count> number of echo reply)
+	int ttl;		  // -t <ttl> | --ttl=<ttl> (IP time to live)
 	const char *host; // host (FQDN or IPv4)
 } t_opts;
 
