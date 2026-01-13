@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -28,6 +29,7 @@ typedef struct s_opts
 	bool help;		  // -h | -? | --help
 	long count;		  // -c <count> (stop after <count> number of echo reply)
 	int ttl;		  // -t <ttl> | --ttl=<ttl> (IP time to live)
+	double interval;  // -i <interval> | --interval=<interval> (seconds between each packet)
 	const char *host; // host (FQDN or IPv4)
 } t_opts;
 

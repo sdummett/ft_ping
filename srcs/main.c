@@ -6,6 +6,21 @@ struct stats g_stats;
 static bool g_verbose = false;
 static const char *g_target = NULL;
 
+static void sleep_interval(double seconds)
+{
+	if (seconds <= 0.0)
+		return;
+
+	struct timespec ts;
+	ts.tv_sec = (time_t)seconds;
+	ts.tv_nsec = (long)((seconds - (double)ts.tv_sec) * 1000000000.0);
+	if (ts.tv_nsec < 0)
+		ts.tv_nsec = 0;
+
+	while (nanosleep(&ts, &ts) == -1 && errno == EINTR)
+		;
+}
+
 // static const char *icmp_error_desc(uint8_t type, uint8_t code)
 // {
 // 	switch (type)
@@ -249,6 +264,30 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	// Validate -i/--interval constraints (similar to ping(8))
+	if (geteuid() != 0)
+	{
+		// Only super-user may set interval to values less than 2 ms
+		if (opts.interval > 0.0 && opts.interval < 0.002)
+		{
+			fprintf(stderr,
+					"ft_ping: Only super-user may set interval to values less than 2 ms\n");
+			exit(EXIT_FAILURE);
+		}
+
+		uint32_t addr = ntohl(dst.sin_addr.s_addr);
+		bool is_multicast = IN_MULTICAST(addr);
+		bool is_broadcast = (addr == 0xFFFFFFFFu) || ((addr & 0xFFu) == 0xFFu);
+
+		// Broadcast/multicast ping have higher limitation for regular user: minimum is 1 sec
+		if ((is_multicast || is_broadcast) && opts.interval < 1.0)
+		{
+			fprintf(stderr,
+					"ft_ping: broadcast/multicast ping: interval should be >= 1 sec\n");
+			exit(EXIT_FAILURE);
+		}
+	}
+
 	// Prepare raw ICMP socket
 	int sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	if (sockfd < 0)
@@ -309,25 +348,19 @@ int main(int argc, char *argv[])
 
 		g_stats.transmitted++;
 
-		if (sent < 0)
+		if (sent >= 0)
 		{
-			seq++;
-			sleep(1);
-			continue;
+			int rc = receive_ping(sockfd, id, seq);
+			if (rc == -2)
+			{
+				// timeout
+				// printf("Request timeout for icmp_seq %d\n", seq);
+			}
+			// rc==1 success, rc==0 verbose already printed, rc==-1 ignore
 		}
-
-		int rc = receive_ping(sockfd, id, seq);
-		if (rc == -2)
-		{
-			// timeout
-			// printf("Request timeout for icmp_seq %d\n", seq);
-			seq++;
-			continue;
-		}
-		// rc==1 success, rc==0 verbose already printed, rc==-1 ignore
 
 		seq++;
-		sleep(1);
+		sleep_interval(opts.interval);
 	}
 
 	// in case of option --count has been set
