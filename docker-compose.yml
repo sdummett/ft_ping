@@ -1,0 +1,11 @@
+services:
+  ft_ping:
+    build: .
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace:rw
+    cap_add:
+      - NET_RAW
+    stdin_open: true
+    tty: true
+    command: ["sleep", "infinity"]
