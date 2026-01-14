@@ -9,6 +9,7 @@ static struct argp_option g_argp_options[] = {
 	{"deadline", 'w', "DEADLINE", 0, "Timeout in seconds before ping exits", 0},
 	{"ttl", 't', "TTL", 0, "Set IP time to live (default: 64)", 0},
 	{"interval", 'i', "INTERVAL", 0, "Wait INTERVAL seconds between sending each packet (default: 1s)", 0},
+	{"packetsize", 's', "PACKETSIZE", 0, "Specify number of data bytes to send (default: 56)", 0},
 	{0, 'h', 0, OPTION_HIDDEN, 0, 0},
 	{0}};
 
@@ -143,6 +144,36 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		opts->interval = v;
 		break;
 	}
+	case 's':
+	{
+		char *end = NULL;
+		long v;
+
+		if (!arg || *arg == '\0')
+			argp_error(state, "invalid argument: '%s'", arg ? arg : "(null)");
+
+		errno = 0;
+		v = strtol(arg, &end, 10);
+		if (errno == ERANGE)
+		{
+			fprintf(stderr, "%s: invalid argument: '%s': Numerical result out of range\n",
+					state->name, arg);
+			exit(EXIT_FAILURE);
+		}
+		if (end == arg || *end != '\0')
+			argp_error(state, "invalid argument: '%s'", arg);
+
+		if (v < 0 || v > MAX_IPV4_ICMP_DATA)
+		{
+			fprintf(stderr,
+					"%s: invalid argument: '%s': out of range: 0 <= value <= %d\n",
+					state->name, arg, MAX_IPV4_ICMP_DATA);
+			exit(EXIT_FAILURE);
+		}
+
+		opts->data_len = (int)v;
+		break;
+	}
 	case 'h':
 		argp_state_help(state, state->out_stream, ARGP_HELP_STD_HELP);
 		break;
@@ -172,6 +203,7 @@ int parse_args(int argc, char **argv, t_opts *opts)
 	opts->help = false;
 	opts->ttl = 64;
 	opts->interval = 1.0;
+	opts->data_len = DEFAULT_DATA_LEN;
 	opts->host = NULL;
 
 	argp_parse(&g_argp, argc, argv, 0, 0, opts);

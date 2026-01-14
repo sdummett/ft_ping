@@ -173,10 +173,13 @@ void handle_sigint(int sig)
 	print_stats_and_exit(EXIT_SUCCESS);
 }
 
-// Build an ICMP Echo Request packet (header + 56 bytes data)
-static size_t create_icmp_packet(unsigned char *buf, int seq, int id)
+// Build an ICMP Echo Request packet (header + <data_len> bytes data)
+// The caller provides a buffer large enough for sizeof(struct icmphdr) + data_len
+// The send timestamp is returned via tv_send for RTT calculation
+static size_t create_icmp_packet(unsigned char *buf, size_t data_len, int seq, int id, struct timeval *tv_send)
 {
-	memset(buf, 0, PACKET_LEN);
+	const size_t packet_len = sizeof(struct icmphdr) + data_len;
+	memset(buf, 0, packet_len);
 
 	struct icmphdr *icmp_hdr = (struct icmphdr *)buf;
 	icmp_hdr->type = ICMP_ECHO;
@@ -184,19 +187,33 @@ static size_t create_icmp_packet(unsigned char *buf, int seq, int id)
 	icmp_hdr->un.echo.id = htons(id);
 	icmp_hdr->un.echo.sequence = htons(seq);
 
-	// Put a timestamp in the first bytes of the payload
-	struct timeval *tv = (struct timeval *)(buf + sizeof(*icmp_hdr));
-	gettimeofday(tv, NULL);
+	// Capture send time (used for RTT calculation)
+	if (tv_send)
+		gettimeofday(tv_send, NULL);
 
-	// Fill remaining payload with a simple pattern
-	unsigned char *payload = (unsigned char *)tv + sizeof(*tv);
-	size_t pattern_len = DATA_LEN - sizeof(*tv);
-	for (size_t i = 0; i < pattern_len; i++)
-		payload[i] = (unsigned char)(i & 0xFF);
+	// Optionally embed the timestamp in the payload if it fits, otherwise just
+	// fill the payload with a deterministic pattern
+	if (data_len > 0)
+	{
+		unsigned char *payload = (unsigned char *)(buf + sizeof(*icmp_hdr));
+
+		if (tv_send && data_len >= sizeof(*tv_send))
+		{
+			memcpy(payload, tv_send, sizeof(*tv_send));
+			size_t off = sizeof(*tv_send);
+			for (size_t i = off; i < data_len; i++)
+				payload[i] = (unsigned char)((i - off) & 0xFF);
+		}
+		else
+		{
+			for (size_t i = 0; i < data_len; i++)
+				payload[i] = (unsigned char)(i & 0xFF);
+		}
+	}
 
 	icmp_hdr->checksum = 0;
-	icmp_hdr->checksum = calculate_checksum(buf, PACKET_LEN);
-	return PACKET_LEN;
+	icmp_hdr->checksum = calculate_checksum(buf, (int)packet_len);
+	return packet_len;
 }
 
 // Receives one packet; returns:
@@ -204,7 +221,7 @@ static size_t create_icmp_packet(unsigned char *buf, int seq, int id)
 //   0 on non-echo packet processed (verbose info possibly printed)
 //  -2 on timeout
 //  -1 on error / ignore
-static int receive_ping(int sockfd, int id, int expected_seq)
+static int receive_ping(int sockfd, int id, int expected_seq, const struct timeval *tv_sent)
 {
 	unsigned char buffer[2048];
 	struct sockaddr_in addr;
@@ -249,8 +266,15 @@ static int receive_ping(int sockfd, int id, int expected_seq)
 
 		if (icmp_hdr->type == ICMP_ECHOREPLY && pkt_seq == expected_seq)
 		{
-			struct timeval *tv_send =
-				(struct timeval *)(buffer + ip_header_len + sizeof(*icmp_hdr));
+			// Prefer the caller-provided send time (works for any -s packetsize),
+			// but fall back to the embedded timestamp when available
+			struct timeval tv_send_fallback;
+			const struct timeval *tv_send = tv_sent;
+			if (!tv_send)
+			{
+				tv_send_fallback = *(struct timeval *)(buffer + ip_header_len + sizeof(*icmp_hdr));
+				tv_send = &tv_send_fallback;
+			}
 			struct timeval tv_recv;
 			gettimeofday(&tv_recv, NULL);
 
@@ -397,10 +421,10 @@ int main(int argc, char *argv[])
 	}
 	int ip_hlen = 20; // Size of a minimal IPv4 header
 	int icmp_hlen = (int)sizeof(struct icmphdr);
-	int total_ip_packet_size = ip_hlen + icmp_hlen + DATA_LEN;
+	int total_ip_packet_size = ip_hlen + icmp_hlen + opts.data_len;
 
 	printf("PING %s (%s) %d(%d) bytes of data.\n",
-		   opts.host, ip_str, DATA_LEN, total_ip_packet_size);
+		   opts.host, ip_str, opts.data_len, total_ip_packet_size);
 
 	bool use_deadline = (opts.deadline > 0);
 	struct timeval t_deadline;
@@ -416,6 +440,15 @@ int main(int argc, char *argv[])
 	int seq = 1;
 
 	int exit_status = EXIT_SUCCESS;
+
+	const size_t packet_len = sizeof(struct icmphdr) + (size_t)opts.data_len;
+	unsigned char *packet = (unsigned char *)malloc(packet_len);
+	if (!packet)
+	{
+		fprintf(stderr, "ft_ping: malloc: %s\n", strerror(errno));
+		close(sockfd);
+		exit(EXIT_FAILURE);
+	}
 
 	while (1)
 	{
@@ -438,8 +471,8 @@ int main(int argc, char *argv[])
 				break;
 		}
 
-		unsigned char packet[PACKET_LEN];
-		size_t packet_len = create_icmp_packet(packet, seq, id);
+		struct timeval tv_sent;
+		create_icmp_packet(packet, (size_t)opts.data_len, seq, id, &tv_sent);
 
 		ssize_t sent = sendto(sockfd, packet, packet_len, 0, (struct sockaddr *)&dst, sizeof(dst));
 
@@ -462,7 +495,7 @@ int main(int argc, char *argv[])
 				setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
 			}
 
-			int rc = receive_ping(sockfd, id, seq);
+			int rc = receive_ping(sockfd, id, seq, &tv_sent);
 			if (rc == -2)
 			{
 				// timeout
@@ -492,8 +525,6 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	free(packet);
 	print_stats_and_exit(exit_status);
-
-	close(sockfd);
-	return 0;
 }

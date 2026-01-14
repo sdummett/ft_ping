@@ -20,17 +20,18 @@
 
 // Reference: inetutils ping default data size is 56 bytes (64 with ICMP header).
 // See GNU inetutils-2.0 manual.
-#define DATA_LEN 56
-#define PACKET_LEN (sizeof(struct icmphdr) + DATA_LEN)
+#define DEFAULT_DATA_LEN 56
+#define MAX_IPV4_ICMP_DATA 65507
 
 typedef struct s_opts
 {
 	bool verbose;	  // -v | --verbose
 	bool help;		  // -h | -? | --help
-	long count;		  // -c <count> (stop after <count> number of echo reply)
-	int deadline;	  // -w <deadline> (timeout in seconds before ping exits)
-	int ttl;		  // -t <ttl> | --ttl=<ttl> (IP time to live)
-	double interval;  // -i <interval> | --interval=<interval> (seconds between each packet)
+	long count;		  // -c | --count <count> (stop after <count> number of echo reply)
+	int deadline;	  // -w | --deadline <deadline> (timeout in seconds before ping exits)
+	int ttl;		  // -t | --ttl <ttl> (IP time to live)
+	double interval;  // -i | --interval <interval> (seconds between each packet)
+	int data_len;	  // -s | --packetsize <packetsize> (number of data bytes to send)
 	const char *host; // host (FQDN or IPv4)
 } t_opts;
 
