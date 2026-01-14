@@ -176,7 +176,7 @@ void handle_sigint(int sig)
 // Build an ICMP Echo Request packet (header + <data_len> bytes data)
 // The caller provides a buffer large enough for sizeof(struct icmphdr) + data_len
 // The send timestamp is returned via tv_send for RTT calculation
-static size_t create_icmp_packet(unsigned char *buf, size_t data_len, int seq, int id, struct timeval *tv_send)
+static size_t create_icmp_packet(unsigned char *buf, size_t data_len, uint16_t seq, int id, struct timeval *tv_send)
 {
 	const size_t packet_len = sizeof(struct icmphdr) + data_len;
 	memset(buf, 0, packet_len);
@@ -221,7 +221,7 @@ static size_t create_icmp_packet(unsigned char *buf, size_t data_len, int seq, i
 //   0 on non-echo packet processed (verbose info possibly printed)
 //  -2 on timeout
 //  -1 on error / ignore
-static int receive_ping(int sockfd, int id, int expected_seq, const struct timeval *tv_sent)
+static int receive_ping(int sockfd, int id, uint16_t expected_seq, const struct timeval *tv_sent)
 {
 	unsigned char buffer[2048];
 	struct sockaddr_in addr;
@@ -254,7 +254,7 @@ static int receive_ping(int sockfd, int id, int expected_seq, const struct timev
 
 		struct icmphdr *icmp_hdr = (struct icmphdr *)(buffer + ip_header_len);
 		int pkt_id = ntohs(icmp_hdr->un.echo.id);
-		int pkt_seq = ntohs(icmp_hdr->un.echo.sequence);
+		uint16_t pkt_seq = (uint16_t)ntohs(icmp_hdr->un.echo.sequence);
 
 		// Ignore packets not belonging to this process
 		if (pkt_id != id)
@@ -289,7 +289,7 @@ static int receive_ping(int sockfd, int id, int expected_seq, const struct timev
 			g_stats.rtt_sum += rtt_ms;
 			g_stats.rtt_sumsq += (rtt_ms * rtt_ms);
 
-			printf("%d bytes from %s: icmp_seq=%d ttl=%d time=%.3f ms\n",
+			printf("%d bytes from %s: icmp_seq=%u ttl=%d time=%.3f ms\n",
 				   bytes_received - ip_header_len,
 				   inet_ntoa(addr.sin_addr),
 				   pkt_seq,
@@ -314,10 +314,10 @@ static int receive_ping(int sockfd, int id, int expected_seq, const struct timev
 				{
 					struct icmphdr *inner_icmp = (struct icmphdr *)(payload + inner_ihl);
 					int inner_id = ntohs(inner_icmp->un.echo.id);
-					int inner_seq = ntohs(inner_icmp->un.echo.sequence);
+					uint16_t inner_seq = (uint16_t)ntohs(inner_icmp->un.echo.sequence);
 					if (inner_icmp->type == ICMP_ECHO && inner_id == id && inner_seq == expected_seq)
 					{
-						fprintf(stderr, "From %s: icmp_seq=%d %s\n",
+						fprintf(stderr, "From %s: icmp_seq=%u %s\n",
 								inet_ntoa(addr.sin_addr), expected_seq,
 								icmp_error_desc(icmp_hdr->type, icmp_hdr->code));
 						return -3;
@@ -437,7 +437,7 @@ int main(int argc, char *argv[])
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
 	int id = getpid() & 0xFFFF;
-	int seq = 1;
+	uint16_t seq = 1;
 
 	int exit_status = EXIT_SUCCESS;
 
@@ -499,7 +499,7 @@ int main(int argc, char *argv[])
 			if (rc == -2)
 			{
 				// timeout
-				// printf("Request timeout for icmp_seq %d\n", seq);
+				// printf("Request timeout for icmp_seq %u\n", seq);
 			}
 			else if (rc == -3)
 			{
